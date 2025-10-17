@@ -1,15 +1,29 @@
 import express from "express";
-import dotenv from 'dotenv'
-import cors from 'cors'
+import dotenv from 'dotenv';
+import cors from 'cors';
+import helmet from 'helmet';
+import compression from 'compression';
+import morgan from 'morgan';
 import prisma from "./utils/prisma";
+import apiRoutes from './routes';
+import { errorHandler, notFoundHandler } from './utils/errorHandler';
 
-dotenv.config()
+dotenv.config();
 
-const app = express()
-const PORT = process.env.PORT || 3000
+const app = express();
+const PORT = process.env.PORT || 3000;
 
-app.use(express.json())
-app.use(cors())
+// Security & Performance Middleware
+app.use(helmet()); // Security headers
+app.use(compression()); // Compress responses
+app.use(cors()); // Enable CORS
+app.use(express.json()); // Parse JSON bodies
+app.use(express.urlencoded({ extended: true })); // Parse URL-encoded bodies
+
+// Logging in development
+if (process.env.NODE_ENV !== 'production') {
+  app.use(morgan('dev'));
+}
 
 app.get('/health', async (req,res) => {
 
@@ -22,73 +36,30 @@ app.get('/health', async (req,res) => {
     })
 })
 
-app.post('/api/v1/opportunities', async (req,res) => {
-try {
-    const {title, description, category, location, isRemote, createdBy} = req.body
-    const opportunity = await prisma.opportunity.create({
-        data: {
-            title,
-            description,
-            category, 
-            location,
-            isRemote: isRemote || false,
-            createdBy  //this requires a UUID to indentify the user..
-        }
 
-    })
-    res.status(201).json({
-        message: 'opportunity created successfully',
-        data: opportunity
-    })
-} catch (err: any) {
-    console.error('Error creating opportunities', err)
-    res.status(400).json({
-        error: 'Failed to creat client',
-        details: err.message || 'Unknown err'
-    })
-}
-})
+app.use('/api/v1', apiRoutes);
 
-app.get('/api/v1/opportunities', async (req,res)=> {
-    try {
-        const opportunities = await prisma.opportunity.findMany({
-            orderBy: {createdAt: 'desc'}
-        })
-        res.json({
-            message: 'Opportunities fetched successfully!',
-            data: opportunities,
-            count: opportunities.length
-        })
-    } catch (err: any) {
-        console.error('Error fetching opportunities', err)
-        res.status(400).json({
-            error: err.message || 'Failed to fetch'
-        })
-    }
-})
+// 404 handler - must come after all valid routes
+app.use(notFoundHandler);
 
-app.use( (req, res) => {
-  res.status(404).json({
-    error: 'Route not found'
-  });
-});
+// Global error handler - must be last
+app.use(errorHandler);
 
+// Start server with database connection test
 app.listen(PORT, async () => {
-  console.log(`Server running on http://localhost:${PORT}`);
-
+  console.log(`🚀 Server running on http://localhost:${PORT}`);
+  
+  // Test database connection on startup
   try {
     await prisma.$queryRaw`SELECT 1`;
-    console.log('Database connected successfully');
-  } catch (error) {
-    if (error instanceof Error) {
-      console.error('Database connection failed:', error.message);
-    } else {
-      console.error('Database connection failed:', error);
-    }
+    console.log('✅ Database connected successfully');
+  } catch (error: any) {
+    console.error('❌ Database connection failed:', error.message);
     console.error('Please check your DATABASE_URL in .env file');
   }
-
-  console.log(`Health check: http://localhost:${PORT}/health`);
+  
+  console.log(`📋 Health check: http://localhost:${PORT}/health`);
+  console.log(`📝 API docs: http://localhost:${PORT}/api/v1`);
 });
 
 export default app;
