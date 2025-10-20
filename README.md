@@ -278,6 +278,43 @@ Check for compilation errors
 | `DATABASE_URL` | PostgreSQL connection string | Yes |
 | `JWT_SECRET` | JWT signing secret (must match Django) | Yes |
 
+## 🚀 Deployment
+
+### Quick Deploy to Production
+
+See `DEPLOYMENT_SUMMARY.md` and `docs/PRE_DEPLOYMENT_CHECKLIST.md` for complete deployment guide.
+
+**Quick Start:**
+```bash
+# 1. Build
+npm ci --production
+npm run build
+
+# 2. Database
+npx prisma migrate deploy
+
+# 3. Start with PM2
+pm2 start ecosystem.config.js --env production
+pm2 save
+
+# 4. Verify
+curl https://opportunities.varsigram.com/health
+```
+
+### Documentation
+- [Deployment Summary](DEPLOYMENT_SUMMARY.md) - **START HERE**
+- [API Documentation](docs/API_DOCUMENTATION.md) - Complete API reference
+- [Pre-Deployment Checklist](docs/PRE_DEPLOYMENT_CHECKLIST.md) - Before going live
+- [DevOps Checklist](docs/checklists/DEVOPS_CHECKLIST.md) - Infrastructure setup
+- [Integration Test Guide](docs/INTEGRATION_TEST_GUIDE.md) - Testing with Django
+
+## 🧪 Testing Integration
+
+```bash
+# Test with Django JWT token
+node test-integration.js <YOUR_JWT_TOKEN>
+```
+
 ## 🤝 Contributing
 
 1. Create a feature branch
