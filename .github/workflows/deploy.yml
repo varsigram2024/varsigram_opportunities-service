@@ -20,17 +20,19 @@ jobs:
           if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
             echo "environment=production" >> $GITHUB_OUTPUT
             echo "port=3002" >> $GITHUB_OUTPUT
-            echo "app_dir=/var/www/opportunity-service/prod/" >> $GITHUB_OUTPUT
+            echo "app_dir=/var/www/opportunity-service/prod" >> $GITHUB_OUTPUT
             echo "pm2_name=opp-prod" >> $GITHUB_OUTPUT
+            echo "branch=main" >> $GITHUB_OUTPUT
           else
             echo "environment=development" >> $GITHUB_OUTPUT
             echo "port=3001" >> $GITHUB_OUTPUT
-            echo "app_dir=/var/www/opportunity-service/staging/" >> $GITHUB_OUTPUT
+            echo "app_dir=/var/www/opportunity-service/staging" >> $GITHUB_OUTPUT
             echo "pm2_name=opp-staging" >> $GITHUB_OUTPUT
+            echo "branch=develop" >> $GITHUB_OUTPUT
           fi
 
       - name: Deploy to Server
-        uses: appleboy/ssh-action@master
+        uses: appleboy/ssh-action@v1.0.3
         env:
           ENV_CONTENT: ${{ steps.env.outputs.environment == 'production' && secrets.ENV_PRODUCTION || secrets.ENV_STAGING }}
         with:
@@ -39,62 +41,124 @@ jobs:
           key: ${{ secrets.SERVER_SSH_KEY }}
           port: 22
           envs: ENV_CONTENT
+          script_stop: true
+          command_timeout: 30m
           script: |
             set -e
             
             APP_DIR="${{ steps.env.outputs.app_dir }}"
             PM2_NAME="${{ steps.env.outputs.pm2_name }}"
-            BRANCH="${{ github.ref_name }}"
+            BRANCH="${{ steps.env.outputs.branch }}"
+            ENVIRONMENT="${{ steps.env.outputs.environment }}"
             
-            echo "Deploying ${{ steps.env.outputs.environment }} environment..."
+            echo "=========================================="
+            echo "🚀 Starting Deployment"
+            echo "Environment: $ENVIRONMENT"
+            echo "Branch: $BRANCH"
+            echo "App Directory: $APP_DIR"
+            echo "PM2 Name: $PM2_NAME"
+            echo "Time: $(date)"
+            echo "=========================================="
+            
+            # Verify required tools
+            echo "🔍 Verifying system requirements..."
+            node --version || { echo "❌ Node.js not installed"; exit 1; }
+            npm --version || { echo "❌ npm not installed"; exit 1; }
+            pm2 --version || { echo "❌ PM2 not installed"; exit 1; }
+            git --version || { echo "❌ Git not installed"; exit 1; }
+            echo "✅ All required tools are installed"
             
             # Create directory if it doesn't exist
+            echo "📁 Preparing directory..."
             mkdir -p $APP_DIR
-            
-            # Navigate to app directory
             cd $APP_DIR
+            echo "✅ Working directory: $(pwd)"
             
             # Clone or pull latest code
             if [ -d ".git" ]; then
-              echo "Pulling latest changes..."
+              echo "📥 Pulling latest changes from $BRANCH branch..."
               git fetch origin
               git reset --hard origin/$BRANCH
+              git clean -fd
+              echo "✅ Code updated successfully"
             else
-              echo "Cloning repository..."
+              echo "📥 Cloning repository (branch: $BRANCH)..."
               git clone -b $BRANCH https://github.com/varsigram2024/varsigram_opportunities-service.git .
+              echo "✅ Repository cloned successfully"
             fi
             
+            # Show current commit
+            echo "📝 Deployed commit:"
+            git log -1 --pretty=format:"%h - %an, %ar : %s"
+            echo ""
+            
             # Create .env file
-            echo "Creating .env file..."
+            echo "⚙️  Creating environment file..."
             echo "$ENV_CONTENT" > .env
+            echo "✅ .env file created"
             
             # Install dependencies
-            echo "Installing dependencies..."
-            npm ci --production
+            echo "📦 Installing dependencies..."
+            if [ -f "package-lock.json" ]; then
+              echo "Using npm ci (clean install)..."
+              npm ci --omit=dev
+            else
+              echo "⚠️  Warning: package-lock.json not found"
+              echo "Using npm install instead..."
+              npm install --omit=dev
+            fi
+            echo "✅ Dependencies installed"
             
-            # Run database migrations if needed
-            # npm run migrate
+            # Create logs directory
+            mkdir -p logs
+            
+            # Run database migrations if migration script exists
+            if grep -q '"migrate"' package.json 2>/dev/null; then
+              echo "🗄️  Running database migrations..."
+              npm run migrate || echo "⚠️  Migration script failed or not needed"
+            fi
             
             # Restart PM2 process
-            echo "Restarting PM2 process..."
+            echo "🔄 Managing PM2 process: $PM2_NAME"
             if pm2 describe $PM2_NAME > /dev/null 2>&1; then
-              pm2 restart $PM2_NAME
+              echo "Restarting existing process..."
+              pm2 restart $PM2_NAME --update-env
+              echo "✅ Process restarted"
             else
+              echo "Starting new process..."
               pm2 start npm --name $PM2_NAME -- start
+              echo "✅ New process started"
             fi
             
             # Save PM2 configuration
-            pm2 save
+            pm2 save --force
             
-            echo "Deployment completed successfully!"
-            pm2 status
+            echo "=========================================="
+            echo "✅ Deployment Completed Successfully!"
+            echo "=========================================="
+            
+            # Show PM2 status
+            echo ""
+            echo "📊 Current PM2 Processes:"
+            pm2 list
+            
+            echo ""
+            echo "📋 Recent Logs (last 15 lines):"
+            pm2 logs $PM2_NAME --lines 15 --nostream || echo "No logs available yet"
+            
+            echo ""
+            echo "🎉 Deployment finished at $(date)"
 
       - name: Deployment Status
         if: always()
         run: |
           if [ ${{ job.status }} == 'success' ]; then
             echo "✅ Deployment to ${{ steps.env.outputs.environment }} successful!"
+            echo "Branch: ${{ github.ref_name }}"
+            echo "Commit: ${{ github.sha }}"
           else
             echo "❌ Deployment to ${{ steps.env.outputs.environment }} failed!"
+            echo "Branch: ${{ github.ref_name }}"
+            echo "Commit: ${{ github.sha }}"
             exit 1
           fi
