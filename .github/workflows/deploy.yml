@@ -97,26 +97,48 @@ jobs:
             echo "$ENV_CONTENT" > .env
             echo "✅ .env file created"
             
-            # Install dependencies
-            echo "📦 Installing dependencies..."
+            # Install ALL dependencies (including devDependencies for build)
+            echo "📦 Installing dependencies (including dev dependencies for build)..."
             if [ -f "package-lock.json" ]; then
-              echo "Using npm ci (clean install)..."
-              npm ci --omit=dev
+              echo "Using npm ci..."
+              npm ci
             else
               echo "⚠️  Warning: package-lock.json not found"
               echo "Using npm install instead..."
-              npm install --omit=dev
+              npm install
             fi
             echo "✅ Dependencies installed"
             
-            # Create logs directory
-            mkdir -p logs
+            # Generate Prisma Client
+            echo "🔧 Generating Prisma Client..."
+            npx prisma generate || { echo "❌ Prisma generate failed"; exit 1; }
+            echo "✅ Prisma Client generated"
             
-            # Run database migrations if migration script exists
-            if grep -q '"migrate"' package.json 2>/dev/null; then
-              echo "🗄️  Running database migrations..."
-              npm run migrate || echo "⚠️  Migration script failed or not needed"
+            # Run Prisma migrations
+            echo "🗄️  Running database migrations..."
+            npx prisma migrate deploy || { echo "⚠️  Migration failed or no migrations to run"; }
+            echo "✅ Database migrations completed"
+            
+            # Build TypeScript
+            echo "🔨 Building TypeScript..."
+            npm run build || { echo "❌ Build failed"; exit 1; }
+            echo "✅ Build completed successfully"
+            
+            # Verify build output
+            if [ ! -f "dist/index.js" ]; then
+              echo "❌ Error: dist/index.js not found after build!"
+              echo "Build output:"
+              ls -la dist/ || echo "dist/ directory not found"
+              exit 1
             fi
+            echo "✅ Entry point verified: dist/index.js"
+            
+            # Remove dev dependencies to save space (optional)
+            echo "🧹 Removing dev dependencies..."
+            npm prune --production || echo "⚠️  Could not prune dependencies"
+            
+            # Create logs directory if it doesn't exist
+            mkdir -p logs
             
             # Restart PM2 process
             echo "🔄 Managing PM2 process: $PM2_NAME"
@@ -126,12 +148,15 @@ jobs:
               echo "✅ Process restarted"
             else
               echo "Starting new process..."
-              pm2 start npm --name $PM2_NAME -- start
+              pm2 start dist/index.js --name $PM2_NAME --cwd $APP_DIR
               echo "✅ New process started"
             fi
             
             # Save PM2 configuration
             pm2 save --force
+            
+            # Wait a moment for app to start
+            sleep 3
             
             echo "=========================================="
             echo "✅ Deployment Completed Successfully!"
@@ -143,8 +168,12 @@ jobs:
             pm2 list
             
             echo ""
-            echo "📋 Recent Logs (last 15 lines):"
-            pm2 logs $PM2_NAME --lines 15 --nostream || echo "No logs available yet"
+            echo "📋 Application Info:"
+            pm2 info $PM2_NAME
+            
+            echo ""
+            echo "📋 Recent Logs (last 20 lines):"
+            pm2 logs $PM2_NAME --lines 20 --nostream || echo "No logs available yet"
             
             echo ""
             echo "🎉 Deployment finished at $(date)"
