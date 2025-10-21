@@ -1,128 +1,100 @@
-name: Deploy to Production
+name: Deploy Microservice
 
 on:
   push:
     branches:
-      - main
-  workflow_dispatch: # Allow manual triggering
+      - develop  # Triggers staging deployment
+      - main     # Triggers production deployment
 
 jobs:
-  test:
-    name: Run Tests
-    runs-on: ubuntu-latest
-    
-    services:
-      postgres:
-        image: postgres:14
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: opportunities_test
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-        ports:
-          - 5432:5432
-    
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
-      
-      - name: Setup Node.js
-        uses: actions/setup-node@v3
-        with:
-          node-version: '18'
-          cache: 'npm'
-      
-      - name: Install dependencies
-        run: npm ci
-      
-      - name: Generate Prisma Client
-        run: npx prisma generate
-      
-      - name: Run database migrations
-        env:
-          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/opportunities_test
-        run: npx prisma migrate deploy
-      
-      - name: Run tests
-        env:
-          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/opportunities_test
-          JWT_SECRET: ${{ secrets.JWT_SECRET }}
-          NODE_ENV: test
-        run: npm test
-  
-  build:
-    name: Build Application
-    runs-on: ubuntu-latest
-    needs: test
-    
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
-      
-      - name: Setup Node.js
-        uses: actions/setup-node@v3
-        with:
-          node-version: '18'
-          cache: 'npm'
-      
-      - name: Install dependencies
-        run: npm ci
-      
-      - name: Build TypeScript
-        run: npm run build
-      
-      - name: Upload build artifacts
-        uses: actions/upload-artifact@v3
-        with:
-          name: dist
-          path: dist/
-          retention-days: 1
-  
   deploy:
-    name: Deploy to Server
     runs-on: ubuntu-latest
-    needs: build
-    if: github.ref == 'refs/heads/main'
     
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
-      
-      - name: Download build artifacts
-        uses: actions/download-artifact@v3
-        with:
-          name: dist
-          path: dist/
-      
-      - name: Deploy to Production Server
-        uses: appleboy/ssh-action@master
-        with:
-          host: ${{ secrets.PRODUCTION_HOST }}
-          username: ${{ secrets.PRODUCTION_USER }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          script: |
-            cd /var/www/opportunities-service
-            git pull origin main
-            npm ci --production
-            npx prisma generate
-            npx prisma migrate deploy
-            npm run build
-            pm2 reload ecosystem.config.js --env production
-            pm2 save
-      
-      - name: Health Check
+
+      - name: Determine environment
+        id: env
         run: |
-          sleep 10
-          curl --fail https://opportunities.varsigram.com/health || exit 1
-      
-      - name: Notify Deployment Success
-        if: success()
-        run: echo "✅ Deployment successful!"
-      
-      - name: Notify Deployment Failure
-        if: failure()
-        run: echo "❌ Deployment failed! Check logs."
+          if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+            echo "environment=production" >> $GITHUB_OUTPUT
+            echo "port=3002" >> $GITHUB_OUTPUT
+            echo "app_dir=/var/www/opportunity-service/prod/" >> $GITHUB_OUTPUT
+            echo "pm2_name=opp-prod" >> $GITHUB_OUTPUT
+          else
+            echo "environment=development" >> $GITHUB_OUTPUT
+            echo "port=3001" >> $GITHUB_OUTPUT
+            echo "app_dir=/var/www/opportunity-service/staging/" >> $GITHUB_OUTPUT
+            echo "pm2_name=opp-staging" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Deploy to Server
+        uses: appleboy/ssh-action@master
+        env:
+          ENV_CONTENT: ${{ steps.env.outputs.environment == 'production' && secrets.ENV_PRODUCTION || secrets.ENV_STAGING }}
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          port: 22
+          envs: ENV_CONTENT
+          script: |
+            set -e
+            
+            APP_DIR="${{ steps.env.outputs.app_dir }}"
+            PM2_NAME="${{ steps.env.outputs.pm2_name }}"
+            BRANCH="${{ github.ref_name }}"
+            
+            echo "Deploying ${{ steps.env.outputs.environment }} environment..."
+            
+            # Create directory if it doesn't exist
+            mkdir -p $APP_DIR
+            
+            # Navigate to app directory
+            cd $APP_DIR
+            
+            # Clone or pull latest code
+            if [ -d ".git" ]; then
+              echo "Pulling latest changes..."
+              git fetch origin
+              git reset --hard origin/$BRANCH
+            else
+              echo "Cloning repository..."
+              git clone -b $BRANCH https://github.com/varsigram2024/varsigram_opportunities-service.git .
+            fi
+            
+            # Create .env file
+            echo "Creating .env file..."
+            echo "$ENV_CONTENT" > .env
+            
+            # Install dependencies
+            echo "Installing dependencies..."
+            npm ci --production
+            
+            # Run database migrations if needed
+            # npm run migrate
+            
+            # Restart PM2 process
+            echo "Restarting PM2 process..."
+            if pm2 describe $PM2_NAME > /dev/null 2>&1; then
+              pm2 restart $PM2_NAME
+            else
+              pm2 start npm --name $PM2_NAME -- start
+            fi
+            
+            # Save PM2 configuration
+            pm2 save
+            
+            echo "Deployment completed successfully!"
+            pm2 status
+
+      - name: Deployment Status
+        if: always()
+        run: |
+          if [ ${{ job.status }} == 'success' ]; then
+            echo "✅ Deployment to ${{ steps.env.outputs.environment }} successful!"
+          else
+            echo "❌ Deployment to ${{ steps.env.outputs.environment }} failed!"
+            exit 1
+          fi
