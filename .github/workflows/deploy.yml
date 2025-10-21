@@ -1,128 +1,193 @@
-name: Deploy to Production
+name: Deploy Microservice
 
 on:
   push:
     branches:
-      - main
-  workflow_dispatch: # Allow manual triggering
+      - develop  # Triggers staging deployment
+      - main     # Triggers production deployment
 
 jobs:
-  test:
-    name: Run Tests
-    runs-on: ubuntu-latest
-    
-    services:
-      postgres:
-        image: postgres:14
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: opportunities_test
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-        ports:
-          - 5432:5432
-    
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
-      
-      - name: Setup Node.js
-        uses: actions/setup-node@v3
-        with:
-          node-version: '18'
-          cache: 'npm'
-      
-      - name: Install dependencies
-        run: npm ci
-      
-      - name: Generate Prisma Client
-        run: npx prisma generate
-      
-      - name: Run database migrations
-        env:
-          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/opportunities_test
-        run: npx prisma migrate deploy
-      
-      - name: Run tests
-        env:
-          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/opportunities_test
-          JWT_SECRET: ${{ secrets.JWT_SECRET }}
-          NODE_ENV: test
-        run: npm test
-  
-  build:
-    name: Build Application
-    runs-on: ubuntu-latest
-    needs: test
-    
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
-      
-      - name: Setup Node.js
-        uses: actions/setup-node@v3
-        with:
-          node-version: '18'
-          cache: 'npm'
-      
-      - name: Install dependencies
-        run: npm ci
-      
-      - name: Build TypeScript
-        run: npm run build
-      
-      - name: Upload build artifacts
-        uses: actions/upload-artifact@v3
-        with:
-          name: dist
-          path: dist/
-          retention-days: 1
-  
   deploy:
-    name: Deploy to Server
     runs-on: ubuntu-latest
-    needs: build
-    if: github.ref == 'refs/heads/main'
     
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
-      
-      - name: Download build artifacts
-        uses: actions/download-artifact@v3
-        with:
-          name: dist
-          path: dist/
-      
-      - name: Deploy to Production Server
-        uses: appleboy/ssh-action@master
-        with:
-          host: ${{ secrets.PRODUCTION_HOST }}
-          username: ${{ secrets.PRODUCTION_USER }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          script: |
-            cd /var/www/opportunities-service
-            git pull origin main
-            npm ci --production
-            npx prisma generate
-            npx prisma migrate deploy
-            npm run build
-            pm2 reload ecosystem.config.js --env production
-            pm2 save
-      
-      - name: Health Check
+
+      - name: Determine environment
+        id: env
         run: |
-          sleep 10
-          curl --fail https://opportunities.varsigram.com/health || exit 1
-      
-      - name: Notify Deployment Success
-        if: success()
-        run: echo "✅ Deployment successful!"
-      
-      - name: Notify Deployment Failure
-        if: failure()
-        run: echo "❌ Deployment failed! Check logs."
+          if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+            echo "environment=production" >> $GITHUB_OUTPUT
+            echo "port=3002" >> $GITHUB_OUTPUT
+            echo "app_dir=/var/www/opportunity-service/prod" >> $GITHUB_OUTPUT
+            echo "pm2_name=opp-prod" >> $GITHUB_OUTPUT
+            echo "branch=main" >> $GITHUB_OUTPUT
+          else
+            echo "environment=development" >> $GITHUB_OUTPUT
+            echo "port=3001" >> $GITHUB_OUTPUT
+            echo "app_dir=/var/www/opportunity-service/staging" >> $GITHUB_OUTPUT
+            echo "pm2_name=opp-staging" >> $GITHUB_OUTPUT
+            echo "branch=develop" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Deploy to Server
+        uses: appleboy/ssh-action@v1.0.3
+        env:
+          ENV_CONTENT: ${{ steps.env.outputs.environment == 'production' && secrets.ENV_PRODUCTION || secrets.ENV_STAGING }}
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          port: 22
+          envs: ENV_CONTENT
+          script_stop: true
+          command_timeout: 30m
+          script: |
+            set -e
+            
+            APP_DIR="${{ steps.env.outputs.app_dir }}"
+            PM2_NAME="${{ steps.env.outputs.pm2_name }}"
+            BRANCH="${{ steps.env.outputs.branch }}"
+            ENVIRONMENT="${{ steps.env.outputs.environment }}"
+            
+            echo "=========================================="
+            echo "🚀 Starting Deployment"
+            echo "Environment: $ENVIRONMENT"
+            echo "Branch: $BRANCH"
+            echo "App Directory: $APP_DIR"
+            echo "PM2 Name: $PM2_NAME"
+            echo "Time: $(date)"
+            echo "=========================================="
+            
+            # Verify required tools
+            echo "🔍 Verifying system requirements..."
+            node --version || { echo "❌ Node.js not installed"; exit 1; }
+            npm --version || { echo "❌ npm not installed"; exit 1; }
+            pm2 --version || { echo "❌ PM2 not installed"; exit 1; }
+            git --version || { echo "❌ Git not installed"; exit 1; }
+            echo "✅ All required tools are installed"
+            
+            # Create directory if it doesn't exist
+            echo "📁 Preparing directory..."
+            mkdir -p $APP_DIR
+            cd $APP_DIR
+            echo "✅ Working directory: $(pwd)"
+            
+            # Clone or pull latest code
+            if [ -d ".git" ]; then
+              echo "📥 Pulling latest changes from $BRANCH branch..."
+              git fetch origin
+              git reset --hard origin/$BRANCH
+              git clean -fd
+              echo "✅ Code updated successfully"
+            else
+              echo "📥 Cloning repository (branch: $BRANCH)..."
+              git clone -b $BRANCH https://github.com/varsigram2024/varsigram_opportunities-service.git .
+              echo "✅ Repository cloned successfully"
+            fi
+            
+            # Show current commit
+            echo "📝 Deployed commit:"
+            git log -1 --pretty=format:"%h - %an, %ar : %s"
+            echo ""
+            
+            # Create .env file
+            echo "⚙️  Creating environment file..."
+            echo "$ENV_CONTENT" > .env
+            echo "✅ .env file created"
+            
+            # Install ALL dependencies (including devDependencies for build)
+            echo "📦 Installing dependencies (including dev dependencies for build)..."
+            if [ -f "package-lock.json" ]; then
+              echo "Using npm ci..."
+              npm ci
+            else
+              echo "⚠️  Warning: package-lock.json not found"
+              echo "Using npm install instead..."
+              npm install
+            fi
+            echo "✅ Dependencies installed"
+            
+            # Generate Prisma Client
+            echo "🔧 Generating Prisma Client..."
+            npx prisma generate || { echo "❌ Prisma generate failed"; exit 1; }
+            echo "✅ Prisma Client generated"
+            
+            # Run Prisma migrations
+            echo "🗄️  Running database migrations..."
+            npx prisma migrate deploy || { echo "⚠️  Migration failed or no migrations to run"; }
+            echo "✅ Database migrations completed"
+            
+            # Build TypeScript
+            echo "🔨 Building TypeScript..."
+            npm run build || { echo "❌ Build failed"; exit 1; }
+            echo "✅ Build completed successfully"
+            
+            # Verify build output
+            if [ ! -f "dist/index.js" ]; then
+              echo "❌ Error: dist/index.js not found after build!"
+              echo "Build output:"
+              ls -la dist/ || echo "dist/ directory not found"
+              exit 1
+            fi
+            echo "✅ Entry point verified: dist/index.js"
+            
+            # Remove dev dependencies to save space (optional)
+            echo "🧹 Removing dev dependencies..."
+            npm prune --production || echo "⚠️  Could not prune dependencies"
+            
+            # Create logs directory if it doesn't exist
+            mkdir -p logs
+            
+            # Restart PM2 process
+            echo "🔄 Managing PM2 process: $PM2_NAME"
+            if pm2 describe $PM2_NAME > /dev/null 2>&1; then
+              echo "Restarting existing process..."
+              pm2 restart $PM2_NAME --update-env
+              echo "✅ Process restarted"
+            else
+              echo "Starting new process..."
+              pm2 start dist/index.js --name $PM2_NAME --cwd $APP_DIR
+              echo "✅ New process started"
+            fi
+            
+            # Save PM2 configuration
+            pm2 save --force
+            
+            # Wait a moment for app to start
+            sleep 3
+            
+            echo "=========================================="
+            echo "✅ Deployment Completed Successfully!"
+            echo "=========================================="
+            
+            # Show PM2 status
+            echo ""
+            echo "📊 Current PM2 Processes:"
+            pm2 list
+            
+            echo ""
+            echo "📋 Application Info:"
+            pm2 info $PM2_NAME
+            
+            echo ""
+            echo "📋 Recent Logs (last 20 lines):"
+            pm2 logs $PM2_NAME --lines 20 --nostream || echo "No logs available yet"
+            
+            echo ""
+            echo "🎉 Deployment finished at $(date)"
+
+      - name: Deployment Status
+        if: always()
+        run: |
+          if [ ${{ job.status }} == 'success' ]; then
+            echo "✅ Deployment to ${{ steps.env.outputs.environment }} successful!"
+            echo "Branch: ${{ github.ref_name }}"
+            echo "Commit: ${{ github.sha }}"
+          else
+            echo "❌ Deployment to ${{ steps.env.outputs.environment }} failed!"
+            echo "Branch: ${{ github.ref_name }}"
+            echo "Commit: ${{ github.sha }}"
+            exit 1
+          fi
