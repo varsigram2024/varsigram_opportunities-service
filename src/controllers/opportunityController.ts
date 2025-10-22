@@ -2,8 +2,6 @@
 import { Request, Response } from 'express';
 import prisma from '../utils/prisma';
 import { ApiError } from '../utils/errorHandler';
-import { OpportunityCategory } from '@prisma/client';
-
 
 // Get all opportunities with optional filtering
 export const getAllOpportunities = async (req: Request, res: Response) => {
@@ -76,7 +74,20 @@ export const getOpportunityById = async (req: Request, res: Response): Promise<v
 // Create new opportunity
 export const createOpportunity = async (req: Request, res: Response) => {
   try {
-    const { title, description, category, location, isRemote, deadline } = req.body;
+    const { 
+      title, 
+      description, 
+      category, 
+      location, 
+      isRemote, 
+      deadline,
+      contactEmail,
+      organization,
+      image,
+      excerpt,
+      requirements,
+      tags
+    } = req.body;
     
     // Get user ID from authenticated request
     const createdBy = req.user?.id;
@@ -87,18 +98,21 @@ export const createOpportunity = async (req: Request, res: Response) => {
       });
       return;
     }
-
-    // Cast the category string from the request body to the Prisma enum type
-    const typedCategory = category as OpportunityCategory;
     
     const opportunity = await prisma.opportunity.create({
       data: {
         title,
         description,
-        category: typedCategory,
+        category,
         location,
         isRemote: isRemote || false,
         deadline: deadline ? new Date(deadline) : null,
+        contactEmail,
+        organization,
+        image,
+        excerpt,
+        requirements,
+        tags: tags || [],
         createdBy
       }
     });
@@ -116,12 +130,24 @@ export const createOpportunity = async (req: Request, res: Response) => {
   }
 };
 
-
 // Update opportunity
 export const updateOpportunity = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const { title, description, category, location, isRemote, deadline } = req.body;
+    const { 
+      title, 
+      description, 
+      category, 
+      location, 
+      isRemote, 
+      deadline,
+      contactEmail,
+      organization,
+      image,
+      excerpt,
+      requirements,
+      tags
+    } = req.body;
     
     // Check if opportunity exists and user owns it
     const existingOpportunity = await prisma.opportunity.findUnique({
@@ -136,26 +162,34 @@ export const updateOpportunity = async (req: Request, res: Response) => {
     }
     
     // Check ownership
-    if (existingOpportunity.createdBy !== req.user?.id) {
+    if (!req.user?.id) {
+      res.status(401).json({
+        error: 'User not authenticated'
+      });
+      return;
+    }
+    if (existingOpportunity.createdBy !== req.user.id) {
       res.status(403).json({
         error: 'You do not have permission to update this opportunity'
       });
       return;
     }
     
-    // Create an object with only the fields that have been provided in the request body
-    const updateData: any = {};
-    if (title) updateData.title = title;
-    if (description) updateData.description = description;
-    if (category) updateData.category = category as OpportunityCategory;
-    if (location) updateData.location = location;
-    if (isRemote !== undefined) updateData.isRemote = isRemote;
-    if (deadline) updateData.deadline = new Date(deadline);
-    
     const opportunity = await prisma.opportunity.update({
       where: { id },
       data: {
-        ...updateData,
+        title,
+        description,
+        category,
+        location,
+        isRemote,
+        deadline: deadline ? new Date(deadline) : null,
+        contactEmail,
+        organization,
+        image,
+        excerpt,
+        requirements,
+        tags,
         updatedAt: new Date()
       }
     });
@@ -172,7 +206,6 @@ export const updateOpportunity = async (req: Request, res: Response) => {
     });
   }
 };
-
 
 // Delete opportunity
 export const deleteOpportunity = async (req: Request, res: Response) => {
@@ -192,12 +225,18 @@ export const deleteOpportunity = async (req: Request, res: Response) => {
     }
     
     // Check ownership
-    if (existingOpportunity.createdBy !== req.user?.id) {
-      res.status(403).json({
-        error: 'You do not have permission to delete this opportunity'
-      });
-      return;
-    }
+        if (!req.user?.id) {
+          res.status(401).json({
+            error: 'User not authenticated'
+          });
+          return;
+        }
+        if (existingOpportunity.createdBy !== req.user.id) {
+          res.status(403).json({
+            error: 'You do not have permission to delete this opportunity'
+          });
+          return;
+        }
     
     await prisma.opportunity.delete({
       where: { id }
@@ -336,7 +375,7 @@ export const getOthers = async (req: Request, res: Response) => {
 // Search opportunities
 export const searchOpportunities = async (req: Request, res: Response) => {
   try {
-    const { q, category, location, isRemote, page = 1, limit = 20 } = req.query;
+    const { q, category, location, isRemote, organization, tags, page = 1, limit = 20 } = req.query;
     
     if (!q) {
       res.status(400).json({
@@ -351,13 +390,20 @@ export const searchOpportunities = async (req: Request, res: Response) => {
       OR: [
         { title: { contains: q as string, mode: 'insensitive' } },
         { description: { contains: q as string, mode: 'insensitive' } },
-        { location: { contains: q as string, mode: 'insensitive' } }
+        { location: { contains: q as string, mode: 'insensitive' } },
+        { organization: { contains: q as string, mode: 'insensitive' } },
+        { requirements: { contains: q as string, mode: 'insensitive' } }
       ]
     };
     
     if (category) where.category = category;
     if (location) where.location = { contains: location as string, mode: 'insensitive' };
     if (isRemote !== undefined) where.isRemote = isRemote === 'true';
+    if (organization) where.organization = { contains: organization as string, mode: 'insensitive' };
+    if (tags) {
+      const tagArray = Array.isArray(tags) ? tags : [tags];
+      where.tags = { hasSome: tagArray as string[] };
+    }
     
     const [opportunities, total] = await Promise.all([
       prisma.opportunity.findMany({

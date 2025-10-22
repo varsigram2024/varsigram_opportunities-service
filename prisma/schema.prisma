@@ -14,16 +14,23 @@ datasource db {
 }
 
 model Opportunity {
-  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  title       String   @db.VarChar(255)
-  description String
-  category    OpportunityCategory
-  location    String?  @db.VarChar(255)
-  isRemote    Boolean  @default(false) @map("is_remote")
-  deadline    DateTime? @map("application_deadline")
-  createdBy   Int      @map("created_by")
-  createdAt   DateTime @default(now()) @map("created_at")
-  updatedAt   DateTime @updatedAt @map("updated_at")
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  title          String   @db.VarChar(255)
+  description    String
+  category       OpportunityCategory
+  location       String?  @db.VarChar(255)
+  isRemote       Boolean  @default(false) @map("is_remote")
+  deadline       DateTime? @map("deadline")
+  contactEmail   String?  @map("contact_email") @db.VarChar(255)
+  organization   String?  @db.VarChar(255)
+  image          String?  @db.VarChar(500)
+  applicants     Int      @default(0)
+  excerpt        String?  @db.VarChar(500)
+  requirements   String?
+  tags           String[]  @default([])
+  createdBy      Int      @map("created_by")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
   
   @@map("opportunities")
 }
