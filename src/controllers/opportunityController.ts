@@ -85,7 +85,17 @@ export const createOpportunity = async (req: Request, res: Response) => {
       });
       return;
     }
-    
+
+    const dataToSend = {
+      title,
+      description,
+      category,
+      location,
+      isRemote: isRemote || false,
+      deadline: deadline ? new Date(deadline) : null,
+      createdBy
+    };
+    console.log('Creating opportunity with data:', dataToSend);
     const opportunity = await prisma.opportunity.create({
       data: {
         title,
