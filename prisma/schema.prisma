@@ -21,7 +21,7 @@ model Opportunity {
   location    String?  @db.VarChar(255)
   isRemote    Boolean  @default(false) @map("is_remote")
   deadline    DateTime? @map("application_deadline")
-  createdBy   String   @map("created_by") @db.Uuid
+  createdBy   Int      @map("created_by")
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
   
