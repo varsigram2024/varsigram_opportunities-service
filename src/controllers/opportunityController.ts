@@ -2,6 +2,8 @@
 import { Request, Response } from 'express';
 import prisma from '../utils/prisma';
 import { ApiError } from '../utils/errorHandler';
+import { OpportunityCategory } from '@prisma/client';
+
 
 // Get all opportunities with optional filtering
 export const getAllOpportunities = async (req: Request, res: Response) => {
@@ -86,21 +88,14 @@ export const createOpportunity = async (req: Request, res: Response) => {
       return;
     }
 
-    const dataToSend = {
-      title,
-      description,
-      category,
-      location,
-      isRemote: isRemote || false,
-      deadline: deadline ? new Date(deadline) : null,
-      createdBy
-    };
-    console.log('Creating opportunity with data:', dataToSend);
+    // Cast the category string from the request body to the Prisma enum type
+    const typedCategory = category as OpportunityCategory;
+    
     const opportunity = await prisma.opportunity.create({
       data: {
         title,
         description,
-        category,
+        category: typedCategory,
         location,
         isRemote: isRemote || false,
         deadline: deadline ? new Date(deadline) : null,
@@ -120,6 +115,7 @@ export const createOpportunity = async (req: Request, res: Response) => {
     });
   }
 };
+
 
 // Update opportunity
 export const updateOpportunity = async (req: Request, res: Response) => {
@@ -147,15 +143,19 @@ export const updateOpportunity = async (req: Request, res: Response) => {
       return;
     }
     
+    // Create an object with only the fields that have been provided in the request body
+    const updateData: any = {};
+    if (title) updateData.title = title;
+    if (description) updateData.description = description;
+    if (category) updateData.category = category as OpportunityCategory;
+    if (location) updateData.location = location;
+    if (isRemote !== undefined) updateData.isRemote = isRemote;
+    if (deadline) updateData.deadline = new Date(deadline);
+    
     const opportunity = await prisma.opportunity.update({
       where: { id },
       data: {
-        title,
-        description,
-        category,
-        location,
-        isRemote,
-        deadline: deadline ? new Date(deadline) : null,
+        ...updateData,
         updatedAt: new Date()
       }
     });
@@ -172,6 +172,7 @@ export const updateOpportunity = async (req: Request, res: Response) => {
     });
   }
 };
+
 
 // Delete opportunity
 export const deleteOpportunity = async (req: Request, res: Response) => {

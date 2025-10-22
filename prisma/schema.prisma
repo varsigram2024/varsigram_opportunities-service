@@ -36,3 +36,4 @@ enum OpportunityCategory {
   PITCH        @map("pitch")
   OTHER        @map("other")
 }
+
