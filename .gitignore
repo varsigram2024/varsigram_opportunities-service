@@ -44,9 +44,8 @@ logs
 .DS_Store
 Thumbs.db
 
-# Prisma
-prisma/migrations/*
-!prisma/migrations/.gitkeep
+# Prisma - Keep migrations tracked for deployment
+# prisma/migrations/* (commented out)
 
 # Testing
 .nyc_output/

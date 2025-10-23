@@ -7,7 +7,7 @@ declare global {
   namespace Express {
     interface Request {
       user?: {
-        id: string;
+        id: number;
         email?: string;
         role?: string;
         [key: string]: any;
@@ -48,8 +48,9 @@ export const authMiddleware = async (
     
     // Extract user info from token payload
     // Adjust these fields based on your Django JWT structure
+    const userId = decoded.user_id || decoded.userId || decoded.sub || decoded.id;
     req.user = {
-      id: decoded.user_id || decoded.userId || decoded.sub || decoded.id,
+      id: userId, // Keep as integer to match Django user ID
       email: decoded.email,
       role: decoded.role,
       ...decoded
