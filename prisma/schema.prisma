@@ -23,6 +23,7 @@ model Opportunity {
   deadline       DateTime? @map("deadline")
   contactEmail   String?  @map("contact_email") @db.VarChar(255)
   organization   String?  @db.VarChar(255)
+  link           String?  @db.VarChar(500)
   image          String?  @db.VarChar(500)
   applicants     Int      @default(0)
   excerpt        String?  @db.VarChar(500)
