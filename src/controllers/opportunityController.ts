@@ -2,6 +2,7 @@
 import { Request, Response } from 'express';
 import prisma from '../utils/prisma';
 import { ApiError } from '../utils/errorHandler';
+import { notifyNewOpportunity } from '../services/notificationService';
 
 // Get all opportunities with optional filtering
 export const getAllOpportunities = async (req: Request, res: Response) => {
@@ -119,6 +120,11 @@ export const createOpportunity = async (req: Request, res: Response) => {
       }
     });
     
+    // Dispatch notifications asynchronously — don't block the response
+    notifyNewOpportunity(opportunity).catch((notifErr) => {
+      console.error('Failed to send opportunity notifications:', notifErr);
+    });
+
     res.status(201).json({
       message: 'Opportunity created successfully!',
       data: opportunity

@@ -45,3 +45,45 @@ enum OpportunityCategory {
   OTHER        @map("other")
 }
 
+// ─── Notification Models ────────────────────────────────────────────
+
+model Notification {
+  id          String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  recipientId Int                @map("recipient_id")
+  title       String             @db.VarChar(255)
+  body        String
+  type        NotificationType
+  data        Json?              // e.g. { "opportunity_id": "..." }
+  sender      Json?              // e.g. { "id": 1, "username": "org", "profile_pic_url": null }
+  isRead      Boolean            @default(false) @map("is_read")
+  createdAt   DateTime           @default(now()) @map("created_at")
+
+  @@index([recipientId, isRead])
+  @@index([recipientId, createdAt])
+  @@map("notifications")
+}
+
+model DevicePushToken {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    Int      @map("user_id")
+  token     String   @unique @db.VarChar(255)  // Expo push token
+  platform  String?  @db.VarChar(20)           // ios | android
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([userId, active])
+  @@map("device_push_tokens")
+}
+
+enum NotificationType {
+  OPPORTUNITY   @map("opportunity")
+  LIKE          @map("like")
+  COMMENT       @map("comment")
+  REPLY         @map("reply")
+  MENTION       @map("mention")
+  FOLLOW        @map("follow")
+  NEW_POST      @map("new_post")
+  REWARD_POINT  @map("reward_point")
+}
+
